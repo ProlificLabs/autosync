@@ -1,0 +1,9 @@
+# Compiled Object files, Static and Dynamic libs
+*.o
+*.a
+*.so
+*.dylib
+*.d
+
+# Header files
+*.h
