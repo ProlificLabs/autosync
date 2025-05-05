@@ -3,12 +3,24 @@ package main
 import (
 	"fmt"
 
-	"yrs-bindings-test/yrs"
+	autosyncdoc "yrs-bindings-test/autoSyncDoc"
 )
 
 func main() {
-	doc := yrs.NewDoc()
-	defer doc.Free()
+	doc := autosyncdoc.NewAutoSyncDoc()
+	defer doc.Destroy()
 
-	fmt.Println(doc.Hello())
+	err := doc.AddValue("message", "hello from Go!")
+	if err != nil {
+		fmt.Println("Error adding value:", err)
+		return
+	}
+
+	jsonData, err := doc.ToJSON()
+	if err != nil {
+		fmt.Println("Error converting to JSON:", err)
+		return
+	}
+
+	fmt.Printf("YDoc JSON: %+v\n", jsonData)
 }

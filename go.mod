@@ -1,3 +1,7 @@
 module yrs-bindings-test
 
 go 1.23.5
+
+require github.com/snorwin/jsonpatch v1.5.0
+
+require github.com/evanphx/json-patch/v5 v5.9.11 // indirect
