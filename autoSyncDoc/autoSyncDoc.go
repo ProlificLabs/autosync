@@ -78,6 +78,10 @@ func (autoSyncDoc *AutoSyncDoc) ToJSON() (map[string]interface{}, error) {
 		return nil, errors.New("failed to unmarshal JSON from YDoc: " + err.Error())
 	}
 
+	if result == nil {
+		return make(map[string]interface{}), nil
+	}
+
 	return result, nil
 }
 
@@ -357,12 +361,78 @@ func navigateToParent(txn *C.YTransaction, rootMap *C.Branch, pathSegments []str
 }
 
 func applyOp(txn *C.YTransaction, rootBranch *C.Branch, op jsonpatch.JSONPatch) error {
+	var allocations []cAllocation
+	defer func() { freeAllocations(allocations) }()
+
+	// --- Handle Root Operation ---
+	if op.Path == "" {
+		switch op.Operation {
+		case "replace":
+			valuesToAdd, ok := op.Value.(map[string]interface{})
+			if !ok {
+				if op.Value == nil {
+					valuesToAdd = make(map[string]interface{})
+				} else {
+					return fmt.Errorf("operation (replace %s): value for root replacement must be a map (or null), got %T", op.Path, op.Value)
+				}
+			}
+
+			// Clear the existing root map
+			C.ymap_remove_all(rootBranch, txn)
+
+			// Insert new values
+			for key, value := range valuesToAdd {
+				yInput, err := buildYInputRecursive(value, &allocations)
+				if err != nil {
+					return fmt.Errorf("operation (replace %s): failed to build YInput for key '%s': %w", op.Path, key, err)
+				}
+
+				keyC := C.CString(key)
+				if keyC == nil {
+					return fmt.Errorf("operation (replace %s): failed to allocate C string for map key '%s'", op.Path, key)
+				}
+				defer C.free(unsafe.Pointer(keyC))
+
+				C.ymap_insert(rootBranch, txn, keyC, &yInput)
+			}
+			return nil // Root replacement successful
+
+		case "add":
+			valuesToAdd, ok := op.Value.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("operation (add %s): value for root addition must be a map, got %T", op.Path, op.Value)
+			}
+
+			// Insert/Update values
+			for key, value := range valuesToAdd {
+				yInput, err := buildYInputRecursive(value, &allocations)
+				if err != nil {
+					return fmt.Errorf("operation (add %s): failed to build YInput for key '%s': %w", op.Path, key, err)
+				}
+
+				keyC := C.CString(key)
+				if keyC == nil {
+					return fmt.Errorf("operation (add %s): failed to allocate C string for map key '%s'", op.Path, key)
+				}
+				defer C.free(unsafe.Pointer(keyC))
+
+				C.ymap_insert(rootBranch, txn, keyC, &yInput) // ymap_insert adds or updates
+			}
+			return nil // Root addition successful
+
+		default:
+			return fmt.Errorf("operation (%s %s): only 'replace' or 'add' operations are supported for the root object", op.Operation, op.Path)
+		}
+	}
+
+	// --- Handle Non-Root Operation ---
 	// Pointer paths start with "/", split and remove the first empty element.
 	pathSegments := strings.Split(op.Path, "/")
 	if len(pathSegments) > 0 && pathSegments[0] == "" {
 		pathSegments = pathSegments[1:]
-	} else if op.Path != "" { // Handle non-empty paths that don't start with / (technically invalid JSON Pointer?)
-		return fmt.Errorf("invalid path format '%s', must start with '/' or be empty for root ops (which are not directly supported)", op.Path)
+	} else { // Handle non-empty paths that don't start with / (technically invalid JSON Pointer?)
+		// This case should ideally not happen if op.Path != "" but doesn't start with "/"
+		return fmt.Errorf("invalid path format '%s', must start with '/'", op.Path)
 	}
 
 	// --- Navigate to Parent ---
@@ -378,9 +448,6 @@ func applyOp(txn *C.YTransaction, rootBranch *C.Branch, op jsonpatch.JSONPatch) 
 			}
 		}
 	}()
-
-	var allocations []cAllocation
-	defer func() { freeAllocations(allocations) }()
 
 	parentKind := C.ytype_kind(parentBranch)
 
@@ -591,4 +658,25 @@ func (autoSyncDoc *AutoSyncDoc) AddValue(key string, value interface{}) error {
 	C.ymap_insert(rootBranch, txn, targetKeyC, &yInput)
 
 	return nil
+}
+
+// UpdateToState synchronizes the document to match newState, returning the applied patches.
+func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
+	currentState, err := doc.ToJSON()
+	if err != nil {
+		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to get current state: %w", err)
+	}
+
+	patch, err := jsonpatch.CreateJSONPatch(newState, currentState)
+	if err != nil {
+		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to create JSON patch: %w", err)
+	}
+
+	err = doc.ApplyOperations(patch)
+	if err != nil {
+		fmt.Printf("failed to apply JSON patch operations:\n%+v\n", patch)
+		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to apply JSON patch operations: %w", err)
+	}
+
+	return patch, nil
 }

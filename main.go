@@ -10,17 +10,54 @@ func main() {
 	doc := autosyncdoc.NewAutoSyncDoc()
 	defer doc.Destroy()
 
-	err := doc.AddValue("message", "hello from Go!")
+	// Get and print initial state
+	initialState, err := doc.ToJSON()
 	if err != nil {
-		fmt.Println("Error adding value:", err)
+		fmt.Println("Error getting initial JSON:", err)
 		return
 	}
+	fmt.Printf("Initial YDoc JSON: %+v\n", initialState)
 
-	jsonData, err := doc.ToJSON()
+	// Define the desired new state
+	newState := map[string]interface{}{
+		"message": "hello from UpdateToState!",
+		"count":   10,
+		"nested": map[string]interface{}{
+			"value": true,
+		},
+		"items": []interface{}{"a", "b", 3},
+	}
+	fmt.Printf("Target State: %+v\n", newState)
+
+	// Update the document to the new state
+	patch, err := autosyncdoc.UpdateToState(doc, newState)
 	if err != nil {
-		fmt.Println("Error converting to JSON:", err)
+		fmt.Println("Error calling UpdateToState:", err)
 		return
 	}
+	fmt.Printf("Generated Patch: %+v\n", patch.List())
 
-	fmt.Printf("YDoc JSON: %+v\n", jsonData)
+	// Get and print the modified state
+	modifiedState, err := doc.ToJSON()
+	if err != nil {
+		fmt.Println("Error getting modified JSON:", err)
+		return
+	}
+	fmt.Printf("Modified YDoc JSON after UpdateToState: %+v\n", modifiedState)
+
+	emptyState := make(map[string]interface{})
+	patch, err = autosyncdoc.UpdateToState(doc, emptyState)
+	if err != nil {
+		fmt.Println("Error calling UpdateToState:", err)
+		return
+	}
+	fmt.Printf("Generated Patch: %+v\n", patch.List())
+
+	// Get and print the final state
+	finalState, err := doc.ToJSON()
+	if err != nil {
+		fmt.Println("Error getting final JSON:", err)
+		return
+	}
+	fmt.Printf("Final YDoc JSON after UpdateToState: %+v\n", finalState)
 }
