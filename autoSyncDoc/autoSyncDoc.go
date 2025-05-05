@@ -17,7 +17,11 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
+	"strings"
 	"unsafe"
+
+	"github.com/snorwin/jsonpatch"
 )
 
 type AutoSyncDoc struct {
@@ -251,7 +255,310 @@ func freeAllocations(allocations []cAllocation) {
 	}
 }
 
-// Example usage (will need to be integrated into applyOperations later)
+// Helper to navigate the YDoc structure based on JSON Pointer path segments.
+// Returns the parent Branch, the final key/index, and a slice of C.YOutput pointers
+// that were generated during navigation and need to be freed by the caller.
+func navigateToParent(txn *C.YTransaction, rootMap *C.Branch, pathSegments []string) (*C.Branch, interface{}, []*C.YOutput, error) {
+	parent := rootMap
+	if parent == nil {
+		return nil, nil, nil, errors.New("navigateToParent received nil rootMap")
+	}
+	if len(pathSegments) == 0 {
+		return nil, nil, nil, errors.New("operation cannot target root directly, must specify key")
+	}
+
+	outputsToFree := []*C.YOutput{}
+	// Helper function to clean up allocated outputs in case of error during navigation
+	cleanupOnError := func(err error) (*C.Branch, interface{}, []*C.YOutput, error) {
+		for _, outputPtr := range outputsToFree {
+			if outputPtr != nil {
+				C.youtput_destroy(outputPtr)
+			}
+		}
+		return nil, nil, nil, err
+	}
+
+	parentPathSegments := pathSegments[:len(pathSegments)-1]
+	lastSegmentStr := pathSegments[len(pathSegments)-1]
+
+	for _, segmentStr := range parentPathSegments {
+		parentKind := C.ytype_kind(parent)
+
+		var nextParentOutput *C.YOutput = nil // Use YOutput* to handle potential NULL
+
+		if parentKind == C.Y_MAP {
+			segmentC := C.CString(segmentStr)
+			if segmentC == nil {
+				return cleanupOnError(fmt.Errorf("failed to allocate C string for path segment '%s'", segmentStr))
+			}
+			defer C.free(unsafe.Pointer(segmentC))
+			nextParentOutput = C.ymap_get(parent, txn, segmentC)
+
+			if nextParentOutput == nil {
+				return cleanupOnError(fmt.Errorf("path segment '%s' not found in map", segmentStr))
+			}
+
+		} else if parentKind == C.Y_ARRAY {
+			index64, err := strconv.ParseUint(segmentStr, 10, 32)
+			if err != nil {
+				return cleanupOnError(fmt.Errorf("invalid array index '%s' in path: %w", segmentStr, err))
+			}
+			index := C.uint32_t(index64)
+			arrayLen := C.yarray_len(parent)
+			if index >= arrayLen {
+				return cleanupOnError(fmt.Errorf("array index %d out of bounds (len %d) for segment '%s'", index, arrayLen, segmentStr))
+			}
+			nextParentOutput = C.yarray_get(parent, txn, index)
+
+			if nextParentOutput == nil {
+				return cleanupOnError(fmt.Errorf("failed to get element at index %d for segment '%s'", index, segmentStr))
+			}
+
+		} else {
+			return cleanupOnError(fmt.Errorf("cannot navigate through non-container type at path segment '%s' (parent kind: %d)", segmentStr, parentKind))
+		}
+
+		// Successfully got nextParentOutput, add it to the list to be freed later by the caller
+		outputsToFree = append(outputsToFree, nextParentOutput)
+
+		outputTag := nextParentOutput.tag
+		var nextParentBranch *C.Branch = nil
+
+		if outputTag == C.Y_MAP {
+			nextParentBranch = C.youtput_read_ymap(nextParentOutput)
+		} else if outputTag == C.Y_ARRAY {
+			nextParentBranch = C.youtput_read_yarray(nextParentOutput)
+		} else {
+			return cleanupOnError(fmt.Errorf("path segment '%s' resolves to a non-container type (tag: %d)", segmentStr, outputTag))
+		}
+
+		if nextParentBranch == nil {
+			return cleanupOnError(fmt.Errorf("failed to resolve branch pointer for segment '%s' despite correct tag", segmentStr))
+		}
+		parent = nextParentBranch // Move to the next level
+	}
+
+	parentKind := C.ytype_kind(parent)
+	if parentKind == C.Y_MAP {
+		return parent, lastSegmentStr, outputsToFree, nil // Return string key
+	} else if parentKind == C.Y_ARRAY {
+		index64, err := strconv.ParseUint(lastSegmentStr, 10, 32)
+		if err != nil {
+			// Check for '-' which is valid for append in JSON patch 'add' for arrays
+			if lastSegmentStr == "-" {
+				return parent, "-", outputsToFree, nil
+			}
+			return cleanupOnError(fmt.Errorf("invalid array index '%s' for final path segment: %w", lastSegmentStr, err))
+		}
+		return parent, C.uint32_t(index64), outputsToFree, nil
+	} else {
+		return cleanupOnError(fmt.Errorf("final parent navigated to is not a map or array (kind: %d)", parentKind))
+	}
+}
+
+func applyOp(txn *C.YTransaction, rootBranch *C.Branch, op jsonpatch.JSONPatch) error {
+	// Pointer paths start with "/", split and remove the first empty element.
+	pathSegments := strings.Split(op.Path, "/")
+	if len(pathSegments) > 0 && pathSegments[0] == "" {
+		pathSegments = pathSegments[1:]
+	} else if op.Path != "" { // Handle non-empty paths that don't start with / (technically invalid JSON Pointer?)
+		return fmt.Errorf("invalid path format '%s', must start with '/' or be empty for root ops (which are not directly supported)", op.Path)
+	}
+
+	// --- Navigate to Parent ---
+	parentBranch, targetKeyOrIndex, navigationOutputsToDestroy, err := navigateToParent(txn, rootBranch, pathSegments)
+	if err != nil {
+		// navigateToParent already cleaned up its outputs on error
+		return fmt.Errorf("operation (%s %s): navigation failed: %w", op.Operation, op.Path, err)
+	}
+	defer func() {
+		for _, outputPtr := range navigationOutputsToDestroy {
+			if outputPtr != nil {
+				C.youtput_destroy(outputPtr)
+			}
+		}
+	}()
+
+	var allocations []cAllocation
+	defer func() { freeAllocations(allocations) }()
+
+	parentKind := C.ytype_kind(parentBranch)
+
+	switch op.Operation {
+	case "add":
+		yInput, err := buildYInputRecursive(op.Value, &allocations) // Pass the op-specific allocations slice
+		if err != nil {
+			return fmt.Errorf("operation (add %s): failed to build YInput for value: %w", op.Path, err)
+		}
+
+		if parentKind == C.Y_MAP {
+			mapKey, ok := targetKeyOrIndex.(string)
+			if !ok {
+				return fmt.Errorf("operation (add %s): expected string map key, got %T", op.Path, targetKeyOrIndex)
+			}
+			mapKeyC := C.CString(mapKey)
+			if mapKeyC == nil {
+				return fmt.Errorf("operation (add %s): failed to allocate C string for map key '%s'", op.Path, mapKey)
+			}
+			defer C.free(unsafe.Pointer(mapKeyC))
+
+			C.ymap_insert(parentBranch, txn, mapKeyC, &yInput)
+
+		} else if parentKind == C.Y_ARRAY {
+			targetIndex := C.uint32_t(0)
+			arrayLen := C.yarray_len(parentBranch)
+
+			// Handle different index types from navigation
+			switch idx := targetKeyOrIndex.(type) {
+			case uint32:
+				targetIndex = C.uint32_t(idx)
+			case C.uint32_t:
+				targetIndex = idx
+			case string:
+				if idx == "-" {
+					// Append case:
+					targetIndex = arrayLen
+				} else {
+					return fmt.Errorf("operation (add %s): invalid array index representation '%v'", op.Path, idx)
+				}
+			default:
+				return fmt.Errorf("operation (add %s): unexpected type for array index %T", op.Path, targetKeyOrIndex)
+			}
+
+			if targetIndex > arrayLen { // Add allows insertion at the end (index == len)
+				return fmt.Errorf("operation (add %s): index %d out of bounds for array insert (len %d)", op.Path, targetIndex, arrayLen)
+			}
+
+			C.yarray_insert_range(parentBranch, txn, targetIndex, &yInput, 1)
+
+		} else {
+			return fmt.Errorf("operation (add %s): parent is not a map or array (kind %d)", op.Path, parentKind)
+		}
+
+	case "remove":
+		if parentKind == C.Y_MAP {
+			mapKey, ok := targetKeyOrIndex.(string)
+			if !ok {
+				return fmt.Errorf("operation (remove %s): expected string map key, got %T", op.Path, targetKeyOrIndex)
+			}
+			mapKeyC := C.CString(mapKey)
+			if mapKeyC == nil {
+				return fmt.Errorf("operation (remove %s): failed to allocate C string for map key '%s'", op.Path, mapKey)
+			}
+			removed := C.ymap_remove(parentBranch, txn, mapKeyC) // 0 if not found, 1 if found
+			defer C.free(unsafe.Pointer(mapKeyC))
+
+			if removed == 0 {
+				return fmt.Errorf("operation (remove %s): key '%s' not found in map", op.Path, mapKey)
+			}
+		} else if parentKind == C.Y_ARRAY {
+			targetIndex, ok := targetKeyOrIndex.(C.uint32_t)
+			if !ok {
+				return fmt.Errorf("operation (remove %s): expected numeric array index (C.uint32_t), got %T", op.Path, targetKeyOrIndex)
+			}
+			arrayLen := C.yarray_len(parentBranch)
+			if targetIndex >= arrayLen {
+				return fmt.Errorf("operation (remove %s): index %d out of bounds for array remove (len %d)", op.Path, targetIndex, arrayLen)
+			}
+			C.yarray_remove_range(parentBranch, txn, targetIndex, 1)
+		} else {
+			return fmt.Errorf("operation (remove %s): parent is not a map or array (kind %d)", op.Path, parentKind)
+		}
+
+	case "replace":
+		yInput, err := buildYInputRecursive(op.Value, &allocations)
+		if err != nil {
+			return fmt.Errorf("operation (replace %s): failed to build YInput for value: %w", op.Path, err)
+		}
+
+		if parentKind == C.Y_MAP {
+			mapKey, ok := targetKeyOrIndex.(string)
+			if !ok {
+				return fmt.Errorf("operation (replace %s): expected string map key, got %T", op.Path, targetKeyOrIndex)
+			}
+			mapKeyC := C.CString(mapKey)
+			if mapKeyC == nil {
+				return fmt.Errorf("operation (replace %s): failed to allocate C string for map key '%s'", op.Path, mapKey)
+			}
+			defer C.free(unsafe.Pointer(mapKeyC))
+			// Use a temporary output to check existence without modifying allocations list yet
+			existingOutput := C.ymap_get(parentBranch, txn, mapKeyC)
+			if existingOutput == nil {
+				return fmt.Errorf("operation (replace %s): key '%s' not found in map for replacement", op.Path, mapKey)
+			}
+			C.youtput_destroy(existingOutput) // Destroy the temporary output
+			C.ymap_insert(parentBranch, txn, mapKeyC, &yInput)
+
+		} else if parentKind == C.Y_ARRAY {
+			targetIndex, ok := targetKeyOrIndex.(C.uint32_t)
+			if !ok {
+				return fmt.Errorf("operation (replace %s): expected numeric array index (C.uint32_t), got %T", op.Path, targetKeyOrIndex)
+			}
+			arrayLen := C.yarray_len(parentBranch)
+			if targetIndex >= arrayLen {
+				return fmt.Errorf("operation (replace %s): index %d out of bounds for array replace (len %d)", op.Path, targetIndex, arrayLen)
+			}
+			// Yjs doesn't have replace, so remove then insert
+			C.yarray_remove_range(parentBranch, txn, targetIndex, 1)
+			C.yarray_insert_range(parentBranch, txn, targetIndex, &yInput, 1)
+		} else {
+			return fmt.Errorf("operation (replace %s): parent is not a map or array (kind %d)", op.Path, parentKind)
+		}
+
+	case "move":
+		// TODO: Implement 'move' - This is complex due to needing YOutput -> Go -> YInput conversion potentially.
+		return fmt.Errorf("operation (move %s): 'move' not yet implemented", op.Path)
+
+	case "copy":
+		// TODO: Implement 'copy' - This is complex due to needing YOutput -> Go -> YInput conversion.
+		return fmt.Errorf("operation (copy %s): 'copy' not yet implemented", op.Path)
+
+	case "test":
+		// TODO: Implement 'test' (optional, but good for compliance)
+		return fmt.Errorf("operation (test %s): 'test' not yet implemented", op.Path)
+
+	default:
+		return fmt.Errorf("operation (%s %s): unsupported operation type '%s'", op.Operation, op.Path, op.Operation)
+	}
+
+	return nil
+}
+
+// ApplyOperations applies a list of JSON Patch operations to this document.
+func (d *AutoSyncDoc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
+	txn := C.ydoc_write_transaction(d.yDoc, 0, nil)
+	if txn == nil {
+		return errors.New("failed to create write transaction")
+	}
+	// We must commit, even if errors occur mid-way, to avoid transaction leaks in Yrs.
+	defer C.ytransaction_commit(txn)
+
+	rootKeyC := C.CString("root")
+	if rootKeyC == nil {
+		return errors.New("failed to allocate C string for root key")
+	}
+	defer C.free(unsafe.Pointer(rootKeyC))
+
+	rootBranch := C.ytype_get(txn, rootKeyC)
+	if rootBranch == nil {
+		// This shouldn't happen if NewAutoSyncDoc worked correctly.
+		return errors.New("root map not found in YDoc")
+	}
+	if C.ytype_kind(rootBranch) != C.Y_MAP {
+		return errors.New("root Yrs object is not a map")
+	}
+
+	for _, op := range patchList.List() {
+		err := applyOp(txn, rootBranch, op)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// Test function (not used in final implementation)
 func (autoSyncDoc *AutoSyncDoc) AddValue(key string, value interface{}) error {
 	txn := C.ydoc_write_transaction(autoSyncDoc.yDoc, 0, nil)
 	if txn == nil {
