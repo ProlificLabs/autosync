@@ -64,7 +64,7 @@ func (autoSyncDoc *AutoSyncDoc) ToJSON() (map[string]interface{}, error) {
 
 	cJsonString := C.ybranch_json(rootBranch, txn)
 	if cJsonString == nil {
-		// ybranch_json might return null if the branch type can't be represented as JSON
+		// ybranch_json might return nil if the branch type can't be represented as JSON
 		// or if there's an internal error.
 		return nil, errors.New("failed to get JSON representation from ybranch_json")
 	}
@@ -373,7 +373,7 @@ func applyOp(txn *C.YTransaction, rootBranch *C.Branch, op jsonpatch.JSONPatch) 
 				if op.Value == nil {
 					valuesToAdd = make(map[string]interface{})
 				} else {
-					return fmt.Errorf("operation (replace %s): value for root replacement must be a map (or null), got %T", op.Path, op.Value)
+					return fmt.Errorf("operation (replace %s): value for root replacement must be a map (or nil), got %T", op.Path, op.Value)
 				}
 			}
 
@@ -660,9 +660,13 @@ func (autoSyncDoc *AutoSyncDoc) AddValue(key string, value interface{}) error {
 	return nil
 }
 
+func (d *AutoSyncDoc) GetState() (map[string]interface{}, error) {
+	return d.ToJSON()
+}
+
 // UpdateToState synchronizes the document to match newState, returning the applied patches.
 func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
-	currentState, err := doc.ToJSON()
+	currentState, err := doc.GetState()
 	if err != nil {
 		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to get current state: %w", err)
 	}
@@ -679,4 +683,58 @@ func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch
 	}
 
 	return patch, nil
+}
+
+// GetStateVector serializes the entire document state into a byte slice using Yrs update format v1.
+// This byte slice can be used later with ApplyStateVector to restore the document.
+func (d *AutoSyncDoc) GetStateVector() ([]byte, error) {
+	txn := C.ydoc_read_transaction(d.yDoc)
+	if txn == nil {
+		return nil, errors.New("GetStateVector: failed to create read transaction")
+	}
+	defer C.ytransaction_commit(txn) // Must commit even read transactions
+
+	var updateLen C.uint32_t
+	// Passing nil state vector encodes the whole document
+	updateDataC := C.ytransaction_state_diff_v1(txn, nil, 0, &updateLen)
+	if updateDataC == nil {
+		return nil, errors.New("GetStateVector: ytransaction_state_diff_v1 returned nil")
+	}
+	defer C.ybinary_destroy(updateDataC, updateLen)
+
+	if updateLen == 0 {
+		return []byte{}, nil
+	}
+
+	// Copy the C data into a Go byte slice, can destroy binary after this
+	goData := C.GoBytes(unsafe.Pointer(updateDataC), C.int(updateLen))
+
+	return goData, nil
+}
+
+// ApplyStateVector applies a previously saved state (obtained via GetStateVector) to the document,
+// overwriting its current content. It uses Yrs update format v1.
+func (d *AutoSyncDoc) ApplyStateVector(stateData []byte) error {
+	txn := C.ydoc_write_transaction(d.yDoc, 0, nil)
+	if txn == nil {
+		return errors.New("ApplyStateVector: failed to create write transaction")
+	}
+	// Must commit to apply changes and avoid leaks, even if apply fails midway.
+	defer C.ytransaction_commit(txn)
+
+	stateDataC := C.CBytes(stateData)
+	if stateDataC == nil {
+		return errors.New("ApplyStateVector: failed to allocate C memory for state data")
+	}
+	defer C.free(stateDataC)
+
+	stateDataLen := C.uint32_t(len(stateData))
+
+	errorCode := C.ytransaction_apply(txn, (*C.char)(stateDataC), stateDataLen)
+
+	if errorCode != 0 {
+		return fmt.Errorf("ApplyStateVector: ytransaction_apply failed with error code %d", errorCode)
+	}
+
+	return nil
 }
