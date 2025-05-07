@@ -614,52 +614,6 @@ func (d *AutoSyncDoc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
 	return nil
 }
 
-// Test function (not used in final implementation)
-func (autoSyncDoc *AutoSyncDoc) AddValue(key string, value interface{}) error {
-	txn := C.ydoc_write_transaction(autoSyncDoc.yDoc, 0, nil)
-	if txn == nil {
-		return errors.New("failed to create write transaction")
-	}
-	defer C.ytransaction_commit(txn) // Rollbacks not supported, must commit to avoid memory leaks
-
-	rootKeyC := C.CString("root")
-	if rootKeyC == nil {
-		return errors.New("failed to allocate C string for root key")
-	}
-	defer C.free(unsafe.Pointer(rootKeyC))
-
-	rootBranch := C.ytype_get(txn, rootKeyC)
-	if rootBranch == nil {
-		return errors.New("root map not found")
-	}
-
-	// Check if rootBranch is actually a map (optional but good practice)
-	if C.ytype_kind(rootBranch) != C.Y_MAP {
-		return errors.New("root object is not a map")
-	}
-
-	// Slice to track all C allocations for this operation
-	var allocations []cAllocation
-	// Defer cleanup immediately after declaring the slice to handle potential errors.
-	defer func() { freeAllocations(allocations) }()
-
-	yInput, err := buildYInputRecursive(value, &allocations)
-	if err != nil {
-		return fmt.Errorf("failed to build YInput: %w", err)
-	}
-
-	targetKeyC := C.CString(key)
-	if targetKeyC == nil {
-		return errors.New("failed to allocate C string for target key")
-	}
-	defer C.free(unsafe.Pointer(targetKeyC))
-
-	// Perform the insertion
-	C.ymap_insert(rootBranch, txn, targetKeyC, &yInput)
-
-	return nil
-}
-
 func (d *AutoSyncDoc) GetState() (map[string]interface{}, error) {
 	return d.ToJSON()
 }

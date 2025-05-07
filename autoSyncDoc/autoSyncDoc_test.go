@@ -60,34 +60,68 @@ func TestMemoryLeakStress(t *testing.T) {
 				i, m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
 		}
 
-		doc := NewAutoSyncDoc()
-		if doc == nil || doc.yDoc == nil {
-			t.Fatalf("Iteration %d: NewAutoSyncDoc returned nil", i)
+		doc1 := NewAutoSyncDoc()
+		if doc1 == nil || doc1.yDoc == nil {
+			t.Fatalf("Iteration %d: NewAutoSyncDoc returned nil for doc1", i)
 		}
 
 		testData := generateTestData(i)
 
-		for key, value := range testData {
-			err := doc.AddValue(key, value)
-			if err != nil {
-				// Using Fatalf here will stop the test immediately on error
-				t.Fatalf("Iteration %d: AddValue failed for key '%s': %v", i, key, err)
+		// Test UpdateToState
+		_, err := UpdateToState(doc1, testData)
+		if err != nil {
+			t.Fatalf("Iteration %d: UpdateToState failed: %v", i, err)
+		}
+
+		jsonData1, err := doc1.ToJSON()
+		if err != nil {
+			t.Fatalf("Iteration %d: ToJSON failed for doc1: %v", i, err)
+		}
+		if !compareMaps(jsonData1, testData) {
+			t.Fatalf("Iteration %d: ToJSON map content mismatch after UpdateToState. Expected %v, got %v", i, testData, jsonData1)
+		}
+
+		// Test GetStateVector
+		stateVector, err := doc1.GetStateVector()
+		if err != nil {
+			t.Fatalf("Iteration %d: GetStateVector failed: %v", i, err)
+		}
+		if i > 0 && len(stateVector) == 0 { // Allow empty state vector only if testData was empty (iteration 0 with certain random outcomes)
+			// A more robust check would be to see if testData itself would result in an empty doc.
+			// For simplicity, we assume non-empty state for i > 0 unless specifically designed.
+			// If testData can be legitimately empty, this check needs adjustment.
+			initialState, _ := doc1.GetState()
+			if len(initialState) > 0 { // only fail if the state was non-empty
+				t.Fatalf("Iteration %d: GetStateVector returned empty state vector for non-empty document", i)
 			}
 		}
 
-		jsonData, err := doc.ToJSON()
-		if err != nil {
-			t.Fatalf("Iteration %d: ToJSON failed: %v", i, err)
+		// Test ApplyStateVector
+		doc2 := NewAutoSyncDoc()
+		if doc2 == nil || doc2.yDoc == nil {
+			t.Fatalf("Iteration %d: NewAutoSyncDoc returned nil for doc2", i)
 		}
-		if len(jsonData) != len(testData) {
-			// Basic sanity check - might need deeper comparison depending on needs
-			t.Fatalf("Iteration %d: ToJSON map length mismatch. Expected %d, got %d", i, len(testData), len(jsonData))
+
+		err = doc2.ApplyStateVector(stateVector)
+		if err != nil {
+			t.Fatalf("Iteration %d: ApplyStateVector failed: %v", i, err)
+		}
+
+		jsonData2, err := doc2.ToJSON()
+		if err != nil {
+			t.Fatalf("Iteration %d: ToJSON failed for doc2 after ApplyStateVector: %v", i, err)
+		}
+
+		if !compareMaps(jsonData2, testData) {
+			t.Fatalf("Iteration %d: ToJSON map content mismatch for doc2 after ApplyStateVector. Expected %v, got %v", i, testData, jsonData2)
 		}
 
 		// CRITICAL: Ensure Destroy is called to free C memory
-		doc.Destroy()
-		// Setting doc to nil helps GC, though not strictly necessary for leak detection by external tools
-		doc = nil
+		doc1.Destroy()
+		doc1 = nil // Help GC
+
+		doc2.Destroy()
+		doc2 = nil // Help GC
 	}
 
 	// Force final GC and check memory stats (mostly for Go heap, C leaks need external tools)
@@ -103,4 +137,114 @@ func TestMemoryLeakStress(t *testing.T) {
 
 	// Note: A small increase in final Alloc vs initial Alloc is normal due to runtime overhead.
 	// Significant growth could indicate a Go leak, but C leaks MUST be checked externally.
+}
+
+// compareMaps recursively compares two maps.
+// Note: This is a basic comparison and might need to be more robust for complex cases
+// (e.g., order of elements in slices if that matters, deeper type checks).
+func compareMaps(m1, m2 map[string]interface{}) bool {
+	if len(m1) != len(m2) {
+		return false
+	}
+	for k, v1 := range m1 {
+		v2, ok := m2[k]
+		if !ok {
+			return false
+		}
+		if !deepCompare(v1, v2) {
+			return false
+		}
+	}
+	return true
+}
+
+func deepCompare(v1, v2 interface{}) bool {
+	if v1 == nil && v2 == nil {
+		return true
+	}
+	if v1 == nil || v2 == nil {
+		return false
+	}
+
+	// Handle float64 specifically due to potential precision issues if converting from interface{}
+	// If original values were int64 but CRDT stores as float64, comparison might fail.
+	// This depends on how Yrs handles numbers internally and how ToJSON serializes them.
+	// For this test, we'll assume numbers are either float64 or int64/int.
+
+	switch val1 := v1.(type) {
+	case map[string]interface{}:
+		val2, ok := v2.(map[string]interface{})
+		if !ok || !compareMaps(val1, val2) {
+			return false
+		}
+	case []interface{}:
+		val2, ok := v2.([]interface{})
+		if !ok || len(val1) != len(val2) {
+			return false
+		}
+		for i := range val1 {
+			if !deepCompare(val1[i], val2[i]) {
+				return false
+			}
+		}
+	case float64:
+		// Yrs might store all numbers as float64.
+		// Handle comparison if v2 is an integer type that got converted.
+		switch val2 := v2.(type) {
+		case float64:
+			if val1 != val2 {
+				return false
+			}
+		case int:
+			if val1 != float64(val2) {
+				return false
+			}
+		case int64:
+			if val1 != float64(val2) {
+				return false
+			}
+		default:
+			return false // Type mismatch or unhandled numeric type
+		}
+	case int64:
+		// Handle comparison if v2 is float64
+		switch val2 := v2.(type) {
+		case int64:
+			if val1 != val2 {
+				return false
+			}
+		case float64:
+			if float64(val1) != val2 {
+				return false
+			}
+		case int: // json.Unmarshal might produce int for smaller numbers
+			if val1 != int64(val2) {
+				return false
+			}
+		default:
+			return false // Type mismatch
+		}
+	case int: // json.Unmarshal might produce int for smaller numbers
+		switch val2 := v2.(type) {
+		case int:
+			if val1 != val2 {
+				return false
+			}
+		case int64:
+			if int64(val1) != val2 {
+				return false
+			}
+		case float64:
+			if float64(val1) != val2 {
+				return false
+			}
+		default:
+			return false // Type mismatch
+		}
+	default:
+		if v1 != v2 {
+			return false
+		}
+	}
+	return true
 }
