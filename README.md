@@ -41,6 +41,12 @@ rustup target add aarch64-apple-darwin  # Usually present if on macOS ARM
 rustup target add x86_64-pc-windows-gnu
 ```
 
+### 3.1. Initialize Git Submodules
+If the project uses Git submodules (e.g., for `thirdParty/y-crdt`), you'll need to initialize and update them:
+```bash
+git submodule update --init --recursive
+```
+
 ### 4. C Header Generator: `cbindgen`
 Install `cbindgen` to generate the C header file (`libyrs.h`) from the Rust code.
 ```bash
