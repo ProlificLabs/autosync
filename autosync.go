@@ -5,14 +5,14 @@ package autosync
 
 /*
 // Common CFLAGS for all supported platforms
-#cgo CFLAGS: -I${SRCDIR}/../yrs_package/include
+#cgo CFLAGS: -I./yrs_package/include
 
 // Platform-specific LDFLAGS
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-unknown-linux-gnu -lyrs -ldl -lm
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/aarch64-unknown-linux-gnu -lyrs -ldl -lm
-#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-apple-darwin -lyrs
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/aarch64-apple-darwin -lyrs
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-pc-windows-gnu -lyrs -lws2_32 -luserenv -lbcrypt
+#cgo linux,amd64 LDFLAGS: -L./yrs_package/lib/x86_64-unknown-linux-gnu -lyrs -ldl -lm
+#cgo linux,arm64 LDFLAGS: -L./yrs_package/lib/aarch64-unknown-linux-gnu -lyrs -ldl -lm
+#cgo darwin,amd64 LDFLAGS: -L./yrs_package/lib/x86_64-apple-darwin -lyrs
+#cgo darwin,arm64 LDFLAGS: -L./yrs_package/lib/aarch64-apple-darwin -lyrs
+#cgo windows,amd64 LDFLAGS: -L./yrs_package/lib/x86_64-pc-windows-gnu -lyrs -lws2_32 -luserenv -lbcrypt
 
 // Common includes for all platforms
 #include <libyrs.h>

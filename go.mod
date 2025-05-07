@@ -1,4 +1,4 @@
-module yrs-bindings-test
+module github.com/ProlificLabs/autosync
 
 go 1.23.5
 

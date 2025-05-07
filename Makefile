@@ -12,7 +12,6 @@ LIB_BASE_DIR := $(PACKAGE_DIR)/lib
 # Base directory for storing arch-specific libs
 
 # Go binary name (for the example build)
-GO_BINARY := autoSyncBuild
 
 # Rust Target Triples
 TARGET_TRIPLES := x86_64-unknown-linux-gnu
@@ -39,12 +38,11 @@ all: build_go
 # Main target to prepare all static libraries and headers for the package
 # Build the Go binary using the generated C bindings
 build_go: yrs
-	@echo "Building Go binary '$(GO_BINARY)'..."
+	@echo "Running Go tests for autosync package..."
 	@echo "Note: Ensure your Go files have correct cgo build tags and LDFLAGS pointing to static libraries in $(LIB_BASE_DIR)/<GOOS>_<GOARCH_OR_TRIPLE>/"
-	@go build -o $(GO_BINARY) .
-	@# Check if build succeeded
-	@test -f $(GO_BINARY) || (echo "Error: Go build failed for $(GO_BINARY)."; exit 1)
-	@echo "Go binary '$(GO_BINARY)' built successfully."
+	@go test . -v
+	@# Check if tests passed (Go test exits non-zero on failure)
+	@echo "Go tests for autosync completed."
 
 # Depends on patching the header and setting the install name (if needed)
 yrs: copy_static_libs_all patch_header
@@ -125,7 +123,5 @@ clean:
 	$(foreach triple,$(TARGET_TRIPLES), rm -rf $(CARGO_BASE_TARGET_DIR)/$(triple);)
 	@# Also clean the host-specific release directory if it exists from previous builds
 	@rm -rf $(YCRDT_DIR)/target/release
-	@echo "Cleaning Go build output ('$(GO_BINARY)')..."
-	@rm -f $(GO_BINARY)
 	@echo "Clean complete."
 

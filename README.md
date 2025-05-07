@@ -89,11 +89,11 @@ The `Makefile` provides several targets to manage the build process:
     *   Generate `libyrs.h` using `cbindgen` from `yffi`.
     *   Copy and patch `libyrs.h` into `yrs_package/include/libyrs.h`.
 
-3.  **Build Example Go Binary**:
+3.  **Run Go Package Tests**:
     ```bash
     make build_go
     ```
-    This depends on `make yrs` and then compiles the example Go program (`main.go`, if you create one, or the `autosync` package tests) which links against the host architecture's static library.
+    This depends on `make yrs` and then runs the Go tests for the `autosync` package (`go test ./autosync/... -v`), linking against the host architecture's static library.
 
 4.  **Build All (Alias for `build_go`)**:
     ```bash
@@ -103,56 +103,27 @@ The `Makefile` provides several targets to manage the build process:
 **Typical Build Workflow:**
 ```bash
 make clean
-make yrs      # Or 'make all' which includes this
-make build_go # If you have a main Go program to test
+make yrs      # Prepare library artifacts
+make build_go # Run tests for the autosync package
 ```
 
 ## Using the `autosync` Go Package
 
-The `autosync` package (located in the `autosync/` directory) provides the `Doc` type.
+The `autosync` package (defined in the root directory) provides the `Doc` type.
 
 ### Integration Steps:
 
 1.  **Ensure `cgo` is Enabled**: `cgo` is required for Go to interface with C libraries. It's enabled by default but ensure `CGO_ENABLED=1` if you've changed it.
 
 2.  **Import the Package**:
-    Assuming this project is in your `GOPATH` or is a Go module dependency:
+    Assuming this module (`github.com/ProlificLabs/autosync`) is a dependency:
     ```go
     import (
         "fmt"
-        // Adjust import path as needed based on your module name and directory structure
-        "your_module_name/autosync" 
+        "github.com/ProlificLabs/autosync" 
     )
     ```
-    If using it locally as a module, you might replace the `your_module_name/...` part in `go.mod` with a `replace` directive if the main module is not this project itself.
-
-3.  **Linking Against Pre-built Static Libraries**:
-    The `autosync/autosync.go` file itself contains `cgo` directives that demonstrate how to link against the static libraries produced by `make yrs`.
-    ```go
-    /*
-    // Common CFLAGS for all supported platforms
-    #cgo CFLAGS: -I${SRCDIR}/../yrs_package/include
-
-    // Platform-specific LDFLAGS
-    #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-unknown-linux-gnu -lyrs -ldl -lm
-    #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/aarch64-unknown-linux-gnu -lyrs -ldl -lm
-    #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-apple-darwin -lyrs
-    #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/aarch64-apple-darwin -lyrs
-    #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../yrs_package/lib/x86_64-pc-windows-gnu -lyrs -lws2_32 -luserenv -lbcrypt
-
-    #include <libyrs.h>
-    #include <stdlib.h>
-    #include <string.h>
-    */
-    import "C"
-    ```
-    *   `CFLAGS: -I${SRCDIR}/../yrs_package/include` tells `cgo` where to find `libyrs.h`. The `${SRCDIR}` variable points to the directory containing the Go source file.
-    *   `LDFLAGS` are specified per target OS/architecture combination using Go build tags (e.g., `linux,amd64`). They tell the Go linker:
-        *   `-L${SRCDIR}/../yrs_package/lib/<target_triple>`: Where to find the `libyrs.a` file.
-        *   `-lyrs`: Link against `libyrs.a`.
-        *   Additional flags (e.g., `-ldl`, `-lm` on Linux) link necessary system libraries.
-
-    When you build your Go application that imports `autosync`, `go build` (with appropriate `GOOS` and `GOARCH` if cross-compiling) will use these directives to link correctly.
+    If using it locally, you might use a `replace` directive in the consuming module's `go.mod` file.
 
 ### Key `Doc` Functions:
 
@@ -165,6 +136,9 @@ The `autosync` package (located in the `autosync/` directory) provides the `Doc`
 *   **`appliedPatches, err := autosync.UpdateToState(d, newStateMap)`**: Calculates the JSON patch needed to transform the document's current state to `newStateMap`, applies it, and returns the patches.
 
 ### Example Usage Snippet:
+
+This demonstrates basic usage within a Go program. You would integrate this logic into your application where needed.
+
 ```go
 package main
 
@@ -172,12 +146,13 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/ProlificLabs/autosync"
 	"github.com/snorwin/jsonpatch" // For creating patch objects
-	"<your_project_root_module_name>/autosync" // Adjust import path to your actual module path
 )
 
 func main() {
 	doc := autosync.NewDoc()
+	// IMPORTANT: Ensure Destroy is called eventually, e.g., using defer in a relevant scope
 	defer doc.Destroy()
 
 	// Initial state
@@ -231,13 +206,13 @@ func main() {
 }
 
 ```
-Create a `main.go` with the above content (adjusting the import path for `autosync` if necessary) and run `go mod tidy && go run main.go` (after `make yrs` has successfully run).
 
 ## Directory Structure
 
 *   `./Makefile`: Main build script.
+*   `./go.mod`, `./go.sum`: Go module definition files.
+*   `./autosync.go`, `./autosync_test.go`: The Go package source and test files.
 *   `./.cargo/config.toml`: Cargo configuration for cross-compilation linkers.
-*   `./autosync/`: Contains the Go package source code (`autosync.go`).
 *   `./yrs_package/`: Output directory created by `make yrs`.
     *   `./yrs_package/include/libyrs.h`: The generated C header file.
     *   `./yrs_package/lib/<target_triple>/libyrs.a`: The compiled static libraries for each architecture.
