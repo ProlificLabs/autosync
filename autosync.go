@@ -628,7 +628,7 @@ func (d *Doc) GetState() (map[string]interface{}, error) {
 }
 
 // UpdateToState synchronizes the document to match newState, returning the applied patches.
-func UpdateToState(d *Doc, newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
+func (d *Doc) UpdateToState(newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
 	currentState, err := d.GetState()
 	if err != nil {
 		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to get current state: %w", err)

@@ -68,7 +68,7 @@ func TestMemoryLeakStress(t *testing.T) {
 		testData := generateTestData(i)
 
 		// Test UpdateToState
-		_, err := UpdateToState(doc1, testData)
+		_, err := doc1.UpdateToState(testData)
 		if err != nil {
 			t.Fatalf("Iteration %d: UpdateToState failed: %v", i, err)
 		}

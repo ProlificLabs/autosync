@@ -139,7 +139,7 @@ The `autosync` package (defined in the root directory) provides the `Doc` type.
 *   **`err := d.ApplyOperations(patchList)`**: Applies a `jsonpatch.JSONPatchList` to the document.
 *   **`stateVec, err := d.GetStateVector()`**: Serializes the document state to a byte slice.
 *   **`err := d.ApplyStateVector(stateVec)`**: Applies a previously obtained state vector to the document.
-*   **`appliedPatches, err := autosync.UpdateToState(d, newStateMap)`**: Calculates the JSON patch needed to transform the document's current state to `newStateMap`, applies it, and returns the patches.
+*   **`appliedPatches, err := d.UpdateToState(newStateMap)`**: Calculates the JSON patch needed to transform the document's current state to `newStateMap`, applies it, and returns the patches.
 
 ### Example Usage Snippet:
 
@@ -184,7 +184,7 @@ func main() {
 		"foo": "baz",
 		"newKey": 123,
 	}
-	applied, err := autosync.UpdateToState(doc, newState)
+	applied, err := doc.UpdateToState(newState)
 	if err != nil {
 		log.Fatal("Failed to update to state:", err)
 	}
