@@ -99,7 +99,7 @@ The `Makefile` provides several targets to manage the build process:
     ```bash
     make build_go
     ```
-    This depends on `make yrs` and then runs the Go tests for the `autosync` package (`go test ./autosync/... -v`), linking against the host architecture's static library.
+    This depends on `make yrs` and then runs the Go tests for the `autosync` package (`go test . -v`), linking against the host architecture's static library.
 
 4.  **Build All (Alias for `build_go`)**:
     ```bash
