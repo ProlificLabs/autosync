@@ -1,0 +1,17 @@
+# Configuration for x86_64-unknown-linux-gnu target (Linux AMD64)
+[target.x86_64-unknown-linux-gnu]
+linker = "x86_64-unknown-linux-gnu-gcc"
+# ar = "x86_64-unknown-linux-gnu-ar" # Uncomment if needed
+# cc = "x86_64-unknown-linux-gnu-gcc" # Uncomment if needed
+
+# Configuration for aarch64-unknown-linux-gnu target (Linux ARM64)
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-unknown-linux-gnu-gcc"
+# ar = "aarch64-unknown-linux-gnu-ar"
+# cc = "aarch64-unknown-linux-gnu-gcc"
+
+# Configuration for x86_64-pc-windows-gnu target (Windows AMD64 MinGW)
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+# ar = "x86_64-w64-mingw32-ar"
+# cc = "x86_64-w64-mingw32-gcc" 

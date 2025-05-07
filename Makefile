@@ -1,82 +1,104 @@
-# Makefile for building Yrs C bindings and preparing them for Go CGO
+# Makefile for building Yrs C bindings (static libs for multi-arch) and preparing them for Go CGO
 
 # Variables
 YCRDT_DIR := thirdParty/y-crdt
 YFFI_DIR := $(YCRDT_DIR)/yffi
-CARGO_TARGET_DIR := $(YCRDT_DIR)/target
-RELEASE_DIR := $(CARGO_TARGET_DIR)/release
-DEPS_DIR := $(RELEASE_DIR)/deps
+CARGO_BASE_TARGET_DIR := $(YCRDT_DIR)/target
+# Base directory for Rust target-specific builds
 
-OUTPUT_DIR := yrs
+PACKAGE_DIR := yrs_package
+INCLUDE_DIR := $(PACKAGE_DIR)/include
+LIB_BASE_DIR := $(PACKAGE_DIR)/lib
+# Base directory for storing arch-specific libs
 
-# Source files (locations after build/generation)
-DYLIB_SRC := $(DEPS_DIR)/libyrs.dylib
-A_SRC := $(DEPS_DIR)/libyrs.a
-LIB_D_SRC := $(RELEASE_DIR)/libyrs.d
-D_SRC := $(DEPS_DIR)/yrs.d
-H_GENERATED_SRC := $(YFFI_DIR)/libyrs.h
-
-# Destination files in OUTPUT_DIR (yrs/)
-DYLIB_DEST := $(OUTPUT_DIR)/libyrs.dylib
-A_DEST := $(OUTPUT_DIR)/libyrs.a
-LIB_D_DEST := $(OUTPUT_DIR)/libyrs.d
-D_DEST := $(OUTPUT_DIR)/yrs.d
-H_DEST := $(OUTPUT_DIR)/libyrs.h
-
-# Detect OS for platform-specific commands
-UNAME_S := $(shell uname -s)
-
-# Go binary name
+# Go binary name (for the example build)
 GO_BINARY := autoSync
 
+# Rust Target Triples
+TARGET_TRIPLES := x86_64-unknown-linux-gnu
+TARGET_TRIPLES += aarch64-unknown-linux-gnu
+TARGET_TRIPLES += x86_64-apple-darwin
+TARGET_TRIPLES += aarch64-apple-darwin
+TARGET_TRIPLES += x86_64-pc-windows-gnu
+    # Add more targets as needed, e.g. x86_64-pc-windows-msvc
+
+# Generated header source and destination
+H_GENERATED_SRC := $(YFFI_DIR)/libyrs.h
+H_DEST := $(INCLUDE_DIR)/libyrs.h
+
+# Detect OS for platform-specific commands (used by patch_header)
+UNAME_S := $(shell uname -s)
+
 # Phony targets (targets that don't represent files)
-.PHONY: all yrs build_rust copy_libs gen_header copy_header patch_header set_install_name clean
+.PHONY: all build_go yrs build_rust_all copy_static_libs_all gen_header copy_header patch_header clean
+.PHONY: $(foreach triple,$(TARGET_TRIPLES),build_rust_$(triple) copy_lib_$(triple))
 
 # Default target
 all: build_go
 
-# Main target to build everything
+# Main target to prepare all static libraries and headers for the package
 # Build the Go binary using the generated C bindings
-# CGO_LDFLAGS_ALLOW is needed to allow linking options like -rpath
 build_go: yrs
-	@echo "Building Go binary..."
-	@go build -ldflags="-extldflags='-Wl,-rpath,@executable_path/yrs'" -o $(GO_BINARY) .
+	@echo "Building Go binary '$(GO_BINARY)'..."
+	@echo "Note: Ensure your Go files have correct cgo build tags and LDFLAGS pointing to static libraries in $(LIB_BASE_DIR)/<GOOS>_<GOARCH_OR_TRIPLE>/"
+	@go build -o $(GO_BINARY) .
 	@# Check if build succeeded
-	@test -f $(GO_BINARY) || (echo "Error: Go build failed."; exit 1)
+	@test -f $(GO_BINARY) || (echo "Error: Go build failed for $(GO_BINARY)."; exit 1)
+	@echo "Go binary '$(GO_BINARY)' built successfully."
 
 # Depends on patching the header and setting the install name (if needed)
-yrs: patch_header set_install_name
+yrs: copy_static_libs_all patch_header
+	@echo "Yrs package artifacts (static libraries and header) are ready in $(PACKAGE_DIR)/"
 
-# Build the Rust library
-build_rust:
-	@echo "Building Yrs Rust library (yffi package)..."
-	@(cd $(YCRDT_DIR) && \
-	  cargo build -p yffi --release)
-	@# Check if build succeeded
-	@test -f $(DYLIB_SRC) || (echo "Error: $(DYLIB_SRC) not found after build. Check Rust build logs."; exit 1)
-	@test -f $(A_SRC) || (echo "Error: $(A_SRC) not found after build. Check Rust build logs."; exit 1)
+# Template for building Rust for a specific target triple
+# $(1) is the target triple
+define RUST_BUILD_TARGET_RULE
+build_rust_$(1):
+	@echo "Building Yrs Rust static library for target: $(1)..."
+	@(cd $(YCRDT_DIR) && cargo build -p yffi --release --target $(1))
+	@# Check if the static library (.a) was built
+	@test -f "$(CARGO_BASE_TARGET_DIR)/$(1)/release/deps/libyrs.a" || \
+	  (echo "Error: libyrs.a not found for target $(1) at '$(CARGO_BASE_TARGET_DIR)/$(1)/release/deps/libyrs.a'. Ensure 'staticlib' crate-type in yffi/Cargo.toml."; exit 1)
+	@echo "Successfully built libyrs.a for target: $(1)"
+endef
 
-# Copy the built libraries (.dylib, .a, .d)
-copy_libs: build_rust
-	@echo "Copying Yrs libraries to $(OUTPUT_DIR)/..."
-	@mkdir -p $(OUTPUT_DIR)
-	@cp $(DYLIB_SRC) $(DYLIB_DEST)
-	@cp $(A_SRC) $(A_DEST)
-	@cp $(LIB_D_SRC) $(LIB_D_DEST)
-	@cp $(D_SRC) $(D_DEST)
+# Instantiate the Rust build rule for each target triple
+$(foreach triple,$(TARGET_TRIPLES),$(eval $(call RUST_BUILD_TARGET_RULE,$(triple))))
+
+# Aggregate target to build all Rust static libraries
+build_rust_all: $(foreach triple,$(TARGET_TRIPLES),build_rust_$(triple))
+	@echo "All Rust static libraries built successfully."
+
+# Template for copying the static library for a specific target triple
+# $(1) is the target triple
+define COPY_LIB_TARGET_RULE
+copy_lib_$(1): build_rust_$(1)
+	@echo "Copying libyrs.a for target $(1) to $(LIB_BASE_DIR)/$(1)/..."
+	@mkdir -p "$(LIB_BASE_DIR)/$(1)"
+	@cp "$(CARGO_BASE_TARGET_DIR)/$(1)/release/deps/libyrs.a" "$(LIB_BASE_DIR)/$(1)/libyrs.a"
+	@# Handle potential .dll.a suffix for Windows MinGW target if it occurs, and general check
+	@if [ "$(1)" = "x86_64-pc-windows-gnu" ] && [ -f "$(CARGO_BASE_TARGET_DIR)/$(1)/release/deps/libyrs.dll.a" ]; then echo "Found libyrs.dll.a for $(1), renaming to libyrs.a in destination."; mv "$(CARGO_BASE_TARGET_DIR)/$(1)/release/deps/libyrs.dll.a" "$(LIB_BASE_DIR)/$(1)/libyrs.a"; elif [ ! -f "$(LIB_BASE_DIR)/$(1)/libyrs.a" ]; then echo "Warning: '$(LIB_BASE_DIR)/$(1)/libyrs.a' was not found after copy attempt for target $(1)."; fi
+	@echo "Copied libyrs.a for target $(1)."
+endef
+
+# Instantiate the copy library rule for each target triple
+$(foreach triple,$(TARGET_TRIPLES),$(eval $(call COPY_LIB_TARGET_RULE,$(triple))))
+
+# Aggregate target to copy all static libraries
+copy_static_libs_all: $(foreach triple,$(TARGET_TRIPLES),copy_lib_$(triple))
+	@echo "All static libraries copied to $(LIB_BASE_DIR)/"
 
 # Generate the C header file using cbindgen
 gen_header:
-	@echo "Generating C header (libyrs.h) using cbindgen..."
-	@(cd $(YFFI_DIR) && \
-	  cbindgen --config cbindgen.toml --crate yffi --output libyrs.h)
+	@echo "Generating C header ($(H_GENERATED_SRC)) using cbindgen..."
+	@(cd $(YFFI_DIR) && cbindgen --config cbindgen.toml --crate yffi --output libyrs.h)
 	@# Check if header was generated
-	@test -f $(H_GENERATED_SRC) || (echo "Error: $(H_GENERATED_SRC) not found after cbindgen. Is cbindgen installed and in PATH?"; exit 1)
+	@test -f "$(H_GENERATED_SRC)" || (echo "Error: '$(H_GENERATED_SRC)' not found. Is cbindgen installed and in PATH?"; exit 1)
 
 # Copy the generated header
 copy_header: gen_header
-	@echo "Copying generated header to $(OUTPUT_DIR)/..."
-	@mkdir -p $(OUTPUT_DIR)
+	@echo "Copying generated header to $(INCLUDE_DIR)/..."
+	@mkdir -p $(INCLUDE_DIR)
 	@cp $(H_GENERATED_SRC) $(H_DEST)
 
 # Patch the copied header file to comment out specific typedefs causing recursive type definitions in go
@@ -93,24 +115,17 @@ else
 endif
 	@echo "Header patching complete."
 
-# Set the install name for the copied dylib on macOS
-set_install_name: copy_libs
-ifeq ($(UNAME_S),Darwin)
-	@echo "Setting install name for $(DYLIB_DEST) on macOS..."
-	@install_name_tool -id "@rpath/libyrs.dylib" $(DYLIB_DEST)
-else
-	@echo "Skipping install name setting (not on macOS)."
-endif
-
 # Clean up generated files
 clean:
-	@echo "Cleaning header file ($(H_DEST))..."
+	@echo "Cleaning generated C header file ($(H_GENERATED_SRC))..."
 	@rm -f $(H_GENERATED_SRC)
-	@echo "Cleaning build artifacts (removing $(OUTPUT_DIR)/)..."
-	@rm -rf $(OUTPUT_DIR)
-	@echo "Cleaning Rust target directory ($(CARGO_TARGET_DIR)/)..."
-	@rm -rf $(RELEASE_DIR)
-	@echo "Cleaning Go build output..."
+	@echo "Cleaning package directory ($(PACKAGE_DIR)/)..."
+	@rm -rf $(PACKAGE_DIR)
+	@echo "Cleaning Rust target directories for all specified architectures..."
+	$(foreach triple,$(TARGET_TRIPLES), rm -rf $(CARGO_BASE_TARGET_DIR)/$(triple);)
+	@# Also clean the host-specific release directory if it exists from previous builds
+	@rm -rf $(YCRDT_DIR)/target/release
+	@echo "Cleaning Go build output ('$(GO_BINARY)')..."
 	@rm -f $(GO_BINARY)
 	@echo "Clean complete."
 
