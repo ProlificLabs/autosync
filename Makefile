@@ -12,7 +12,7 @@ LIB_BASE_DIR := $(PACKAGE_DIR)/lib
 # Base directory for storing arch-specific libs
 
 # Go binary name (for the example build)
-GO_BINARY := autoSync
+GO_BINARY := autoSyncBuild
 
 # Rust Target Triples
 TARGET_TRIPLES := x86_64-unknown-linux-gnu

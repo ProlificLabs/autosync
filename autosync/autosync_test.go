@@ -1,6 +1,6 @@
 //go:build cgo
 
-package autosyncdoc
+package autosync
 
 import (
 	"fmt"
@@ -60,7 +60,7 @@ func TestMemoryLeakStress(t *testing.T) {
 				i, m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
 		}
 
-		doc1 := NewAutoSyncDoc()
+		doc1 := NewDoc()
 		if doc1 == nil || doc1.yDoc == nil {
 			t.Fatalf("Iteration %d: NewAutoSyncDoc returned nil for doc1", i)
 		}
@@ -97,7 +97,7 @@ func TestMemoryLeakStress(t *testing.T) {
 		}
 
 		// Test ApplyStateVector
-		doc2 := NewAutoSyncDoc()
+		doc2 := NewDoc()
 		if doc2 == nil || doc2.yDoc == nil {
 			t.Fatalf("Iteration %d: NewAutoSyncDoc returned nil for doc2", i)
 		}

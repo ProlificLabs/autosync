@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	autosyncdoc "yrs-bindings-test/autoSyncDoc"
+	autosync "yrs-bindings-test/autoSync"
 )
 
 func main() {
-	doc := autosyncdoc.NewAutoSyncDoc()
+	doc := autosync.NewDoc()
 	defer doc.Destroy()
 
 	// Get and print initial state
@@ -30,7 +30,7 @@ func main() {
 	fmt.Printf("Target State: %+v\n", newState)
 
 	// Update the document to the new state
-	patch, err := autosyncdoc.UpdateToState(doc, newState)
+	patch, err := autosync.UpdateToState(doc, newState)
 	if err != nil {
 		fmt.Println("Error calling UpdateToState:", err)
 		return
@@ -52,7 +52,7 @@ func main() {
 	}
 
 	emptyState := make(map[string]interface{})
-	patch, err = autosyncdoc.UpdateToState(doc, emptyState)
+	patch, err = autosync.UpdateToState(doc, emptyState)
 	if err != nil {
 		fmt.Println("Error calling UpdateToState:", err)
 		return
@@ -99,7 +99,7 @@ func main() {
 	}
 	fmt.Printf("Second State Vector JSON: %+v\n", secondSVState)
 
-	newDoc := autosyncdoc.NewAutoSyncDoc()
+	newDoc := autosync.NewDoc()
 	defer newDoc.Destroy()
 
 	err = newDoc.ApplyStateVector(firstStateVector)

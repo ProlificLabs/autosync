@@ -1,12 +1,12 @@
-# Yrs-Go Bindings Test with AutoSyncDoc
+# Yrs-Go Bindings with AutoSync
 
-This project provides Go bindings for the [Yrs](https://github.com/y-crdt/y-crdt/tree/main/yrs) CRDT library, enabling JSON Patch-based synchronization for Go applications. The core component is the `AutoSyncDoc` Go type, which wraps a Yrs document and exposes methods for manipulation and state management.
+This project provides Go bindings for the [Yrs](https://github.com/y-crdt/y-crdt/tree/main/yrs) CRDT library, enabling JSON Patch-based synchronization for Go applications. The core component is the `Doc` Go type, which wraps a Yrs document and exposes methods for manipulation and state management.
 
 The project is set up to build static C-compatible libraries from the Rust `yffi` crate for multiple target architectures, which are then consumed by the Go package using `cgo`.
 
 ## Features
 
-*   **`AutoSyncDoc` Go Type**: A Go struct that manages an underlying Yrs document.
+*   **`Doc` Go Type**: A Go struct that manages an underlying Yrs document.
 *   **JSON Patch Synchronization**: Apply JSON patches to update the document state.
 *   **State Serialization**: Get the document state as a JSON-compatible `map[string]interface{}`.
 *   **State Vector Management**:
@@ -93,7 +93,7 @@ The `Makefile` provides several targets to manage the build process:
     ```bash
     make build_go
     ```
-    This depends on `make yrs` and then compiles the example Go program (`main.go`, if you create one, or the `autoSyncDoc` package tests) which links against the host architecture's static library.
+    This depends on `make yrs` and then compiles the example Go program (`main.go`, if you create one, or the `autosync` package tests) which links against the host architecture's static library.
 
 4.  **Build All (Alias for `build_go`)**:
     ```bash
@@ -107,28 +107,27 @@ make yrs      # Or 'make all' which includes this
 make build_go # If you have a main Go program to test
 ```
 
-## Using the `autoSyncDoc` Go Package
+## Using the `autosync` Go Package
 
-The `autoSyncDoc` package (located in the `autoSyncDoc/` directory) provides the `AutoSyncDoc` type.
+The `autosync` package (located in the `autosync/` directory) provides the `Doc` type.
 
 ### Integration Steps:
 
 1.  **Ensure `cgo` is Enabled**: `cgo` is required for Go to interface with C libraries. It's enabled by default but ensure `CGO_ENABLED=1` if you've changed it.
 
 2.  **Import the Package**:
-    Assuming this project `yrs-bindings-test` is in your `GOPATH` or is a Go module dependency:
+    Assuming this project is in your `GOPATH` or is a Go module dependency:
     ```go
     import (
         "fmt"
-        // Adjust import path as needed, e.g.,
-        // "your_module_path/yrs-bindings-test/autoSyncDoc"
-        "github.com/yourusername/yrs-bindings-test/autoSyncDoc" 
+        // Adjust import path as needed based on your module name and directory structure
+        "your_module_name/autosync" 
     )
     ```
-    If using it locally as a module, you might replace the `github.com/...` part in `go.mod` with a `replace` directive.
+    If using it locally as a module, you might replace the `your_module_name/...` part in `go.mod` with a `replace` directive if the main module is not this project itself.
 
 3.  **Linking Against Pre-built Static Libraries**:
-    The `autoSyncDoc/autoSyncDoc.go` file itself contains `cgo` directives that demonstrate how to link against the static libraries produced by `make yrs`.
+    The `autosync/autosync.go` file itself contains `cgo` directives that demonstrate how to link against the static libraries produced by `make yrs`.
     ```go
     /*
     // Common CFLAGS for all supported platforms
@@ -153,17 +152,17 @@ The `autoSyncDoc` package (located in the `autoSyncDoc/` directory) provides the
         *   `-lyrs`: Link against `libyrs.a`.
         *   Additional flags (e.g., `-ldl`, `-lm` on Linux) link necessary system libraries.
 
-    When you build your Go application that imports `autoSyncDoc`, `go build` (with appropriate `GOOS` and `GOARCH` if cross-compiling) will use these directives to link correctly.
+    When you build your Go application that imports `autosync`, `go build` (with appropriate `GOOS` and `GOARCH` if cross-compiling) will use these directives to link correctly.
 
-### Key `AutoSyncDoc` Functions:
+### Key `Doc` Functions:
 
-*   **`asd := autosyncdoc.NewAutoSyncDoc()`**: Creates a new `AutoSyncDoc`.
-*   **`asd.Destroy()`**: Frees the underlying Yrs C resources. **Crucial to call this** when done to prevent memory leaks.
-*   **`jsonState, err := asd.ToJSON()`**: Gets the current document state as `map[string]interface{}`.
-*   **`err := asd.ApplyOperations(patchList)`**: Applies a `jsonpatch.JSONPatchList` to the document.
-*   **`stateVec, err := asd.GetStateVector()`**: Serializes the document state to a byte slice.
-*   **`err := asd.ApplyStateVector(stateVec)`**: Applies a previously obtained state vector to the document.
-*   **`appliedPatches, err := autosyncdoc.UpdateToState(asd, newStateMap)`**: Calculates the JSON patch needed to transform the document's current state to `newStateMap`, applies it, and returns the patches.
+*   **`d := autosync.NewDoc()`**: Creates a new `Doc`.
+*   **`d.Destroy()`**: Frees the underlying Yrs C resources. **Crucial to call this** when done to prevent memory leaks.
+*   **`jsonState, err := d.ToJSON()`**: Gets the current document state as `map[string]interface{}`.
+*   **`err := d.ApplyOperations(patchList)`**: Applies a `jsonpatch.JSONPatchList` to the document.
+*   **`stateVec, err := d.GetStateVector()`**: Serializes the document state to a byte slice.
+*   **`err := d.ApplyStateVector(stateVec)`**: Applies a previously obtained state vector to the document.
+*   **`appliedPatches, err := autosync.UpdateToState(d, newStateMap)`**: Calculates the JSON patch needed to transform the document's current state to `newStateMap`, applies it, and returns the patches.
 
 ### Example Usage Snippet:
 ```go
@@ -174,11 +173,11 @@ import (
 	"log"
 
 	"github.com/snorwin/jsonpatch" // For creating patch objects
-	"yrs-bindings-test/autoSyncDoc" // Adjust import path
+	"<your_project_root_module_name>/autosync" // Adjust import path to your actual module path
 )
 
 func main() {
-	doc := autosyncdoc.NewAutoSyncDoc()
+	doc := autosync.NewDoc()
 	defer doc.Destroy()
 
 	// Initial state
@@ -204,7 +203,7 @@ func main() {
 		"foo": "baz",
 		"newKey": 123,
 	}
-	applied, err := autosyncdoc.UpdateToState(doc, newState)
+	applied, err := autosync.UpdateToState(doc, newState)
 	if err != nil {
 		log.Fatal("Failed to update to state:", err)
 	}
@@ -221,7 +220,7 @@ func main() {
 	fmt.Printf("State vector length: %d bytes\n", len(stateVec))
 
 	// Create a new doc and apply state vector
-	doc2 := autosyncdoc.NewAutoSyncDoc()
+	doc2 := autosync.NewDoc()
 	defer doc2.Destroy()
 	err = doc2.ApplyStateVector(stateVec)
 	if err != nil {
@@ -232,13 +231,13 @@ func main() {
 }
 
 ```
-Create a `main.go` with the above content (adjusting the import path for `autoSyncDoc` if necessary) and run `go mod tidy && go run main.go` (after `make yrs` has successfully run).
+Create a `main.go` with the above content (adjusting the import path for `autosync` if necessary) and run `go mod tidy && go run main.go` (after `make yrs` has successfully run).
 
 ## Directory Structure
 
 *   `./Makefile`: Main build script.
 *   `./.cargo/config.toml`: Cargo configuration for cross-compilation linkers.
-*   `./autoSyncDoc/`: Contains the Go package source code (`autoSyncDoc.go`).
+*   `./autosync/`: Contains the Go package source code (`autosync.go`).
 *   `./yrs_package/`: Output directory created by `make yrs`.
     *   `./yrs_package/include/libyrs.h`: The generated C header file.
     *   `./yrs_package/lib/<target_triple>/libyrs.a`: The compiled static libraries for each architecture.

@@ -1,7 +1,7 @@
 //go:build cgo
 
-// Package autosyncdoc provides JSON-Patch-based synchronization with a yrs-backed CRDT.
-package autosyncdoc
+// Package autosync provides JSON-Patch-based synchronization with a yrs-backed CRDT.
+package autosync
 
 /*
 // Common CFLAGS for all supported platforms
@@ -33,30 +33,30 @@ import (
 	"github.com/snorwin/jsonpatch"
 )
 
-type AutoSyncDoc struct {
+type Doc struct {
 	yDoc *C.YDoc
 }
 
-func NewAutoSyncDoc() *AutoSyncDoc {
-	autoSyncDoc := &AutoSyncDoc{
+func NewDoc() *Doc {
+	d := &Doc{
 		yDoc: C.ydoc_new(),
 	}
 	rootKey := C.CString("root")
 	defer C.free(unsafe.Pointer(rootKey))
 
-	C.ymap(autoSyncDoc.yDoc, rootKey) // create root map
-	return autoSyncDoc
+	C.ymap(d.yDoc, rootKey) // create root map
+	return d
 }
 
-// Destroy frees the underlying Yrs document. MUST be called when the AutoSyncDoc is no longer needed to prevent memory leaks.
-func (autoSyncDoc *AutoSyncDoc) Destroy() {
+// Destroy frees the underlying Yrs document. MUST be called when the Doc is no longer needed to prevent memory leaks.
+func (d *Doc) Destroy() {
 	// Do we need to call ydoc_clear as well?
-	C.ydoc_destroy(autoSyncDoc.yDoc)
+	C.ydoc_destroy(d.yDoc)
 }
 
 // ToJSON serializes the current state of the YDoc root map to a Go map.
-func (autoSyncDoc *AutoSyncDoc) ToJSON() (map[string]interface{}, error) {
-	txn := C.ydoc_read_transaction(autoSyncDoc.yDoc)
+func (d *Doc) ToJSON() (map[string]interface{}, error) {
+	txn := C.ydoc_read_transaction(d.yDoc)
 	if txn == nil {
 		return nil, errors.New("failed to create read transaction")
 	}
@@ -67,7 +67,7 @@ func (autoSyncDoc *AutoSyncDoc) ToJSON() (map[string]interface{}, error) {
 
 	rootBranch := C.ytype_get(txn, rootKey)
 	if rootBranch == nil {
-		// This might happen if the root map wasn't created, though NewAutoSyncDoc ensures it.
+		// This might happen if the root map wasn't created, though NewDoc ensures it.
 		return nil, errors.New("root map not found")
 	}
 
@@ -590,7 +590,7 @@ func applyOp(txn *C.YTransaction, rootBranch *C.Branch, op jsonpatch.JSONPatch) 
 }
 
 // ApplyOperations applies a list of JSON Patch operations to this document.
-func (d *AutoSyncDoc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
+func (d *Doc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
 	txn := C.ydoc_write_transaction(d.yDoc, 0, nil)
 	if txn == nil {
 		return errors.New("failed to create write transaction")
@@ -606,7 +606,7 @@ func (d *AutoSyncDoc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
 
 	rootBranch := C.ytype_get(txn, rootKeyC)
 	if rootBranch == nil {
-		// This shouldn't happen if NewAutoSyncDoc worked correctly.
+		// This shouldn't happen if NewDoc worked correctly.
 		return errors.New("root map not found in YDoc")
 	}
 	if C.ytype_kind(rootBranch) != C.Y_MAP {
@@ -623,13 +623,13 @@ func (d *AutoSyncDoc) ApplyOperations(patchList jsonpatch.JSONPatchList) error {
 	return nil
 }
 
-func (d *AutoSyncDoc) GetState() (map[string]interface{}, error) {
+func (d *Doc) GetState() (map[string]interface{}, error) {
 	return d.ToJSON()
 }
 
 // UpdateToState synchronizes the document to match newState, returning the applied patches.
-func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
-	currentState, err := doc.GetState()
+func UpdateToState(d *Doc, newState map[string]interface{}) (jsonpatch.JSONPatchList, error) {
+	currentState, err := d.GetState()
 	if err != nil {
 		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to get current state: %w", err)
 	}
@@ -639,7 +639,7 @@ func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch
 		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to create JSON patch: %w", err)
 	}
 
-	err = doc.ApplyOperations(patch)
+	err = d.ApplyOperations(patch)
 	if err != nil {
 		fmt.Printf("failed to apply JSON patch operations:\n%+v\n", patch)
 		return jsonpatch.JSONPatchList{}, fmt.Errorf("failed to apply JSON patch operations: %w", err)
@@ -650,7 +650,7 @@ func UpdateToState(doc *AutoSyncDoc, newState map[string]interface{}) (jsonpatch
 
 // GetStateVector serializes the entire document state into a byte slice using Yrs update format v1.
 // This byte slice can be used later with ApplyStateVector to restore the document.
-func (d *AutoSyncDoc) GetStateVector() ([]byte, error) {
+func (d *Doc) GetStateVector() ([]byte, error) {
 	txn := C.ydoc_read_transaction(d.yDoc)
 	if txn == nil {
 		return nil, errors.New("GetStateVector: failed to create read transaction")
@@ -677,7 +677,7 @@ func (d *AutoSyncDoc) GetStateVector() ([]byte, error) {
 
 // ApplyStateVector applies a previously saved state (obtained via GetStateVector) to the document,
 // overwriting its current content. It uses Yrs update format v1.
-func (d *AutoSyncDoc) ApplyStateVector(stateData []byte) error {
+func (d *Doc) ApplyStateVector(stateData []byte) error {
 	txn := C.ydoc_write_transaction(d.yDoc, 0, nil)
 	if txn == nil {
 		return errors.New("ApplyStateVector: failed to create write transaction")
