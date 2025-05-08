@@ -1,6 +1,6 @@
 module github.com/ProlificLabs/autosync
 
-go 1.23.5
+go 1.22.10
 
 require github.com/snorwin/jsonpatch v1.5.0
 
