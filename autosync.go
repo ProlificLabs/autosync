@@ -51,7 +51,10 @@ func NewDoc() *Doc {
 func NewDocFromStateVector(stateVector []byte) (*Doc, error) {
 	doc := NewDoc()
 
-	doc.ApplyStateVector(stateVector)
+	err := doc.ApplyStateVector(stateVector)
+	if err != nil {
+		return nil, err
+	}
 
 	return doc, nil
 }
