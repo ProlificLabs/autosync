@@ -4,6 +4,7 @@ package autosync
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"runtime"
 	"testing"
@@ -247,4 +248,60 @@ func deepCompare(v1, v2 interface{}) bool {
 		}
 	}
 	return true
+}
+
+func TestBuildYInputRecursiveCoverage(t *testing.T) {
+	testCases := []struct {
+		name        string
+		input       interface{}
+		expectError bool
+	}{
+		{"nilValue", nil, false},
+		{"boolTrue", true, false},
+		{"boolFalse", false, false},
+		{"int64Value", int64(12345), false},
+		{"intValue", int(67890), false},
+		{"uint64ValueInRange", uint64(98765), false},
+		{"uint64ValueOverflow", uint64(math.MaxInt64 + 1), true},
+		{"float64Value", float64(123.456), false},
+		{"float32Value", float32(78.90), false},
+		{"stringValue", "hello world", false},
+		{"emptySlice", []interface{}{}, false},
+		{"simpleSlice", []interface{}{1, "two", true, nil, 3.14}, false},
+		{"nestedSlice", []interface{}{[]interface{}{1, 2}, []interface{}{"a", "b"}}, false},
+		{"emptyMap", map[string]interface{}{}, false},
+		{"simpleMap", map[string]interface{}{"a": 1, "b": "two", "c": true, "d": nil, "e": 5.55}, false},
+		{"nestedMap", map[string]interface{}{"key1": map[string]interface{}{"subkey1": 100}, "key2": "value2"}, false},
+		{"mapInSlice", []interface{}{map[string]interface{}{"foo": "bar"}}, false},
+		{"sliceInMap", map[string]interface{}{"list": []interface{}{10, 20}}, false},
+		{"mapWithNonStringKeyType", map[int]interface{}{1: "one"}, true}, // This should fail reflect.String check
+		{"complexNested", map[string]interface{}{
+			"level1_string": "string_l1",
+			"level1_map": map[string]interface{}{
+				"level2_slice": []interface{}{1, true, nil, map[string]interface{}{"level3_float": 3.14159}},
+				"level2_int":   42,
+			},
+			"level1_slice": []interface{}{nil, "slice_str", []int{100, 200}},
+		}, false},
+	}
+
+	for _, tc := range testCases {
+		tc := tc // capture range variable for parallel tests
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var allocations []cAllocation
+			_, err := buildYInputRecursive(tc.input, &allocations)
+			defer freeAllocations(allocations)
+
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("buildYInputRecursive(%v) expected an error, but got nil", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("buildYInputRecursive(%v) returned an unexpected error: %v", tc.input, err)
+				}
+			}
+		})
+	}
 }

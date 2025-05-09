@@ -130,14 +130,14 @@ func buildYInputRecursive(value interface{}, allocations *[]cAllocation) (C.YInp
 		}
 		return C.yinput_bool(C.Y_FALSE), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return C.yinput_long(C.longlong(val.Int())), nil
+		return C.yinput_long(C.int64_t(val.Int())), nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		u := val.Uint()
 		// Check for overflow if converting uint64 to int64
 		if u > math.MaxInt64 {
 			return C.YInput{}, fmt.Errorf("uint64 value %d overflows int64", u)
 		}
-		return C.yinput_long(C.longlong(u)), nil // C.longlong is int64_t
+		return C.yinput_long(C.int64_t(u)), nil
 	case reflect.Float32, reflect.Float64:
 		return C.yinput_float(C.double(val.Float())), nil
 	case reflect.String:
