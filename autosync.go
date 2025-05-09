@@ -48,6 +48,14 @@ func NewDoc() *Doc {
 	return d
 }
 
+func NewDocFromStateVector(stateVector []byte) (*Doc, error) {
+	doc := NewDoc()
+
+	doc.ApplyStateVector(stateVector)
+
+	return doc, nil
+}
+
 // Destroy frees the underlying Yrs document. MUST be called when the Doc is no longer needed to prevent memory leaks.
 func (d *Doc) Destroy() {
 	// Do we need to call ydoc_clear as well?
